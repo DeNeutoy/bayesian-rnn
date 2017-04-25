@@ -5,6 +5,7 @@ import tensorflow as tf
 from tensorflow.contrib.rnn import static_rnn
 
 from stochastic_variables import get_random_normal_variable, ExternallyParameterisedLSTM
+from stochastic_variables import log_gaussian_mixture_sample_probabilities, log_gaussian_sample_probabilities
 
 import logging
 
@@ -68,6 +69,11 @@ class BayesianRNN(object):
             phi_b, phi_b_mean, phi_b_std = get_random_normal_variable("phi_b", 0.0, 0.05,
                                                [4 * self.hidden_size], dtype=tf.float32)
 
+            tf.summary.image("phi_mean", tf.reshape(phi_w_mean, [1, self.embedding_size + self.hidden_size,
+                                                4 * self.hidden_size, 1]), max_outputs=1)
+            tf.summary.image("phi_std", tf.reshape(phi_w_std, [1, self.embedding_size + self.hidden_size,
+                                                4 * self.hidden_size, 1]), max_outputs=1)
+
             phi_cell = ExternallyParameterisedLSTM(phi_w, phi_b, num_units=self.hidden_size)
 
         with tf.variable_scope("softmax_weights"):
@@ -85,19 +91,24 @@ class BayesianRNN(object):
         [theta_w_mean, theta_b_mean], [posterior_softmax_w_mean, posterior_softmax_b_mean] = \
             self.sharpen_posterior(inputs, phi_cell, [phi_w, phi_b], [softmax_w, softmax_b])
 
+        tf.summary.image("theta_mean", tf.reshape(theta_w_mean, [1, self.embedding_size + self.hidden_size,
+                                                             4 * self.hidden_size, 1]), max_outputs=1)
         logger.info("Building LSTM cell with new weights sampled from posterior")
         with tf.variable_scope("theta_lstm"):
             theta_cell = ExternallyParameterisedLSTM(theta_w, theta_b, num_units=self.hidden_size)
 
         outputs, final_state = static_rnn(theta_cell, inputs, dtype=tf.float32)
 
-        self.cost, self.final_state = self.get_negative_log_likelihood(outputs,
+        negative_log_likelihood, self.final_state = self.get_negative_log_likelihood(outputs,
                                                                        posterior_softmax_w,
                                                                        posterior_softmax_b)
 
-        tf.summary.scalar("negative_log_likelihood", self.cost)
+        tf.summary.scalar("negative_log_likelihood", negative_log_likelihood)
 
         # KL(q(theta| mu, (x, y)) || p(theta | mu))
+        # For each parameter, compute the KL divergence between the parameters exactly, as they are
+        # parameterised using multivariate gaussians with diagonal covariance, meaning the KL between
+        # them is a exact function of their means and standard deviations.
         theta_kl = 0.0
         for theta, phi in zip([theta_w_mean, theta_b_mean, posterior_softmax_w_mean, posterior_softmax_b_mean],
                               [phi_w_mean, phi_b_mean, softmax_w_mean, softmax_b_mean]):
@@ -106,23 +117,33 @@ class BayesianRNN(object):
         tf.summary.scalar("theta_kl", theta_kl)
 
         # KL(q(phi) || p(phi))
-        # Note that here we are using an _empirical_ approximation of the KL divergence
+        # Here we are using an _empirical_ approximation of the KL divergence
         # using a single sample, because we are parameterising p(phi) as a mixture of gaussians,
         # so the KL no longer has a closed form. This also means we use the samples
         # from the distributions (i.e the weights of the network) rather than their parameters.
         phi_kl = 0.0
-        for phi in [phi_w, phi_b, softmax_w, softmax_b]:
+        for weight, mean, std in [[phi_w, phi_w_mean, phi_w_std], [phi_b, phi_b_mean, phi_w_std],
+                    [softmax_w, softmax_w_mean, softmax_w_std], [softmax_b, softmax_b_mean, softmax_b_std]]:
 
-            bernoulli_samples = tf.floor(0.8 + tf.random_uniform(tf.shape(phi), minval=0.0, maxval=1.0))
-            gaussian_mixture_1 = tf.random_normal(tf.shape(phi), mean=0.0, stddev=0.0009)
-            gaussian_mixture_2 = tf.random_normal(tf.shape(phi), mean=0.0, stddev=0.15)
+            bernoulli_samples = tf.floor(0.8 + tf.random_uniform(tf.shape(weight), minval=0.0, maxval=1.0))
+            mean1 = mean2 = tf.constant(0.0, shape=tf.shape(mean))
+            # Very pointy one:
+            std1 = tf.constant(0.0009, shape=tf.shape(std))
+            # Flatter one:
+            std2 = tf.constant(0.15, shape=tf.shape(std))
 
-            mixture_prior = bernoulli_samples * gaussian_mixture_1 + (1.0 - bernoulli_samples) * gaussian_mixture_2
+            phi_log_probs = log_gaussian_sample_probabilities(weight, mean, std)
+            phi_mixture_log_probs = \
+                log_gaussian_mixture_sample_probabilities(weight, bernoulli_samples, mean1, mean2, std1, std2)
 
-            # TODO: This is unstable.
-            phi_kl += tf.reduce_sum(tf.log(phi) - tf.log(mixture_prior)) / self.batch_size
+            kl = tf.exp(phi_log_probs) * \
+                 (phi_log_probs - phi_mixture_log_probs) / self.batch_size
 
-        self.cost += theta_kl #+ phi_kl
+            phi_kl += tf.reduce_sum(kl)
+
+        tf.summary.scalar("phi_kl", phi_kl)
+
+        self.cost = negative_log_likelihood + 0.1*theta_kl + 0.1*phi_kl
 
         tf.summary.scalar("cost", self.cost)
 
@@ -152,11 +173,13 @@ class BayesianRNN(object):
         :param cell_weights: A tuple of (phi_w, phi_b), corresponding to the parameters used
                 in all 4 gates of the LSTM cell.
 
-        :return theta_weights: A tuple of (theta_w, theta_b) of the same respective shape as
-                 (phi_w, phi_b), parameterised as a linear combination of phi and
+        :return theta_weights, posterior_softmax_weights: A tuple of (theta_w, theta_b)/(softmax_w, softmax_b)
+                  of the same respective shape as
+                 (phi_w, phi_b)/(softmax_w, softmax_b), parameterised as a linear combination of phi and
                  delta := -log(p(y|phi, x) by sampling from: theta ~ N(theta| phi - mu * delta, sigma*I),
                  where sigma is a hyperparameter and mu is a "learning rate".
-        :return theta_parameters: A tuple of (theta_w_mean, theta_b_mean), the mean of the normal
+
+        :return theta_parameters/softmax_parameters: A tuple of (theta_w_mean, theta_b_mean)/(softmax_w_mean, softma), the mean of the normal
          distribution used to sample theta (i.e  phi - mu * delta).
         """
 
@@ -173,7 +196,7 @@ class BayesianRNN(object):
         parameter_name_scopes = ["phi_w_sample", "phi_b_sample", "softmax_w_sample", "softmax_b_sample"]
         for (cell_weight, log_likelihood_grad, scope) in zip(all_weights, gradients, parameter_name_scopes):
 
-            with tf.variable_scope(scope):
+            with tf.variable_scope(scope):  # We want each parameter to use different smoothing weights.
                 new_hierarchical_posterior, new_posterior_mean = self.resample(cell_weight, log_likelihood_grad)
 
             new_weights.append(new_hierarchical_posterior)
@@ -200,7 +223,7 @@ class BayesianRNN(object):
         smoothing_variable = tf.get_variable("posterior_mean_smoothing",
                                              shape=weight.get_shape(),
                                              initializer=tf.random_normal_initializer(stddev=0.01))
-        # Here we are saying:
+        # Here we are basically saying:
         # "if we had to choose another set of weights to use, they should probably be a
         # combination of what they are now and some gradient step with momentum towards
         # the loss of our objective wrt to these parameters. Plus a very little bit of noise."
@@ -212,6 +235,11 @@ class BayesianRNN(object):
 
     def get_negative_log_likelihood(self, outputs, softmax_w, softmax_b):
 
+        """
+        Given a sequence of outputs from an LSTM and projection weights to project the LSTM
+        outputs to |V|, compute the batch and sequence averaged NLL.
+        """
+
         # Softmax to get probability distribution over vocab.
         output = tf.reshape(tf.concat(outputs, 1), [-1, self.hidden_size])
 
@@ -219,11 +247,12 @@ class BayesianRNN(object):
 
         labels = tf.reshape(self.targets, [-1])
         labels = tf.one_hot(labels, self.vocab_size)
-        # We can't use sparse_cross_entropy_loss here yet because it's second derivative isn't
-        # implmented in tensorflow yet, so this is why we have to create the actual 1-hot labels explicitly.
+        # We can't use sparse_cross_entropy_loss as normal here because it's second derivative isn't
+        # implmented in tensorflow yet (which we need because this loss is a function of the derivative
+        # of the log likelihood wrt phi), so we have to create the actual 1-hot labels explicitly.
         loss = tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=labels)
 
-        cost = (tf.reduce_sum(loss) / self.batch_size)
+        cost = (tf.reduce_sum(loss) / (self.batch_size * self.num_steps))
         final_state = outputs[-1]
 
         return cost, final_state
