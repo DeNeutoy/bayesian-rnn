@@ -122,24 +122,25 @@ class BayesianRNN(object):
         # so the KL no longer has a closed form. This also means we use the samples
         # from the distributions (i.e the weights of the network) rather than their parameters.
         phi_kl = 0.0
-        for weight, mean, std in [[phi_w, phi_w_mean, phi_w_std], [phi_b, phi_b_mean, phi_w_std],
-                    [softmax_w, softmax_w_mean, softmax_w_std], [softmax_b, softmax_b_mean, softmax_b_std]]:
+        for weight, mean, std in [[phi_w, phi_w_mean, phi_w_std],
+                                  [phi_b, phi_b_mean, phi_b_std],
+                                  [softmax_w, softmax_w_mean, softmax_w_std],
+                                  [softmax_b, softmax_b_mean, softmax_b_std]]:
 
             bernoulli_samples = tf.floor(0.8 + tf.random_uniform(tf.shape(weight), minval=0.0, maxval=1.0))
-            mean1 = mean2 = tf.constant(0.0, shape=tf.shape(mean))
+            mean1 = mean2 = tf.zeros_like(mean)
             # Very pointy one:
-            std1 = tf.constant(0.0009, shape=tf.shape(std))
+            std1 = 0.0009 * tf.ones_like(std)
             # Flatter one:
-            std2 = tf.constant(0.15, shape=tf.shape(std))
+            std2 = 0.15 * tf.ones_like(std)
 
             phi_log_probs = log_gaussian_sample_probabilities(weight, mean, std)
             phi_mixture_log_probs = \
                 log_gaussian_mixture_sample_probabilities(weight, bernoulli_samples, mean1, mean2, std1, std2)
 
-            kl = tf.exp(phi_log_probs) * \
-                 (phi_log_probs - phi_mixture_log_probs) / self.batch_size
+            kl = tf.exp(phi_log_probs) * (phi_log_probs - phi_mixture_log_probs)
 
-            phi_kl += tf.reduce_sum(kl)
+            phi_kl += tf.reduce_mean(kl)
 
         tf.summary.scalar("phi_kl", phi_kl)
 
@@ -275,7 +276,7 @@ class BayesianRNN(object):
                         ((tf.square(sigma1) + tf.square((mean1 - mean2))) /(2 * tf.square(sigma2))) \
                         - 0.5
 
-        return tf.reduce_sum(kl_divergence) / self.batch_size
+        return tf.reduce_mean(kl_divergence)
 
     def run_train_step(self, sess, inputs, targets):
         summary, cost, train_step, _ = sess.run([self.summary, self.cost, self.global_step, self.train_op],

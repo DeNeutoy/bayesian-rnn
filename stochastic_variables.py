@@ -13,7 +13,7 @@ def log_gaussian_sample_probabilities(samples, mean, std):
     with the given mean and standard deviation.
     """
     pi_sigma = - 0.5 * tf.log(2.0 * std * math.pi)
-    mean_shift = tf.square(samples - mean) / (2 * std)
+    mean_shift = tf.square(samples - mean) / (2.0 * std)
 
     return pi_sigma - mean_shift
 
@@ -24,8 +24,8 @@ def log_gaussian_mixture_sample_probabilities(samples, bernouli_samples, mean1, 
     with the given means and standard deviations, along with precomputed bernouli samples to compute the
     mixture.
     """
-    gaussian1 = (1.0/tf.sqrt(2 * std1 * math.pi)) * tf.exp(- tf.square(samples - mean1) / (2 * std1))
-    gaussian2 = (1.0/tf.sqrt(2 * std2 * math.pi)) * tf.exp(- tf.square(samples - mean2) / (2 * std2))
+    gaussian1 = (1.0/tf.sqrt(2.0 * std1 * math.pi)) * tf.exp(- tf.square(samples - mean1) / (2.0 * std1))
+    gaussian2 = (1.0/tf.sqrt(2.0 * std2 * math.pi)) * tf.exp(- tf.square(samples - mean2) / (2.0 * std2))
 
     mixture = bernouli_samples * gaussian1 + (1.0 - bernouli_samples) * gaussian2
 
@@ -38,12 +38,20 @@ def get_random_normal_variable(name, mean, standard_dev, shape, dtype):
     A wrapper around tf.get_variable which lets you get a "variable" which is
      explicitly a sample from a normal distribution.
     """
+
+    # Inverse of a softplus function, so that the value of the standard deviation
+    # will be equal to what the user specifies, but we can still enforce positivity
+    # by wrapping the standard deviation in the softplus function.
+    standard_dev = tf.log(tf.exp(standard_dev) - 1.0) * tf.ones(shape)
+
     mean = tf.get_variable(name + "_mean", shape,
                            initializer=tf.constant_initializer(mean),
                            dtype=dtype)
-    standard_deviation = tf.get_variable(name + "_standard_deviation", shape,
-                                         initializer=tf.constant_initializer(standard_dev),
+    standard_deviation = tf.get_variable(name + "_standard_deviation",
+                                         initializer=standard_dev,
                                          dtype=dtype)
+
+    standard_deviation = tf.nn.softplus(standard_deviation)
     weights = mean + (standard_deviation * tf.random_normal(shape, 0.0, 1.0, dtype))
     return weights, mean, standard_deviation
 
