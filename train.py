@@ -83,7 +83,12 @@ def main(unused_args):
 
     while not supervisor.should_stop() and step < config.max_max_epoch:
 
-        inputs, targets = next(train_data_batcher)
+        try:
+            inputs, targets = next(train_data_batcher)
+
+        except StopIteration:
+            train_data_batcher = ptb_iterator(train_data, model.batch_size, model.num_steps)
+            inputs, targets = next(train_data_batcher)
 
         (summaries, loss, train_step) = model.run_train_step(sess, inputs, targets)
 
@@ -91,7 +96,11 @@ def main(unused_args):
         running_avg_loss = get_running_avg_loss("train_loss", running_avg_loss, loss,
                                                 train_summary_writer, train_step)
 
-        inputs, targets = next(val_data_batcher)
+        try:
+            inputs, targets = next(val_data_batcher)
+        except StopIteration:
+            val_data_batcher = ptb_iterator(val_data, model.batch_size, model.num_steps)
+            inputs, targets = next(val_data_batcher)
         (val_summaries, val_loss, val_step) = model.run_train_step(sess, inputs, targets)
 
         train_summary_writer.add_summary(summaries, train_step)
