@@ -8,13 +8,10 @@ class SmallConfig(object):
     num_steps = 20
     embedding_size = 100
     hidden_size = 200
-    max_epoch = 4
-    max_max_epoch = 1000
-    keep_prob = 1.0
+    max_epoch = 1000000
     lr_decay = 0.5
     batch_size = 20
     vocab_size = 10000
-    use_lstm = False
 
 
 class MediumConfig(object):
@@ -26,13 +23,10 @@ class MediumConfig(object):
     num_steps = 35
     embedding_size = 300
     hidden_size = 650
-    max_epoch = 6
-    max_max_epoch = 39
-    keep_prob = 0.5
+    max_epoch = 1000000
     lr_decay = 0.8
     batch_size = 20
     vocab_size = 10000
-    use_lstm = False
 
 
 class LargeConfig(object):
@@ -44,13 +38,10 @@ class LargeConfig(object):
     num_steps = 35
     embedding_size = 300
     hidden_size = 1500
-    max_epoch = 14
-    max_max_epoch = 55
-    keep_prob = 0.35
+    max_epoch = 1000000
     lr_decay = 1 / 1.15
     batch_size = 20
     vocab_size = 10000
-    use_lstm = False
 
 
 class TitanXConfig(object):
@@ -62,10 +53,7 @@ class TitanXConfig(object):
     num_steps = 35
     embedding_size = 300
     hidden_size = 1500
-    max_epoch = 14
-    max_max_epoch = 55
-    keep_prob = 0.35
+    max_epoch = 1000000
     lr_decay = 1 / 1.10
     batch_size = 64
     vocab_size = 10000
-    use_lstm = False

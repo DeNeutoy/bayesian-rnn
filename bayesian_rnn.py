@@ -29,7 +29,6 @@ class BayesianRNN(object):
         self.num_layers = 1
         self.vocab_size = config.vocab_size
         self.max_grad_norm = config.max_grad_norm
-        self.use_lstm = config.use_lstm
         self.learning_rate = config.learning_rate
         self.is_training = is_training
 
@@ -102,7 +101,6 @@ class BayesianRNN(object):
         negative_log_likelihood, self.final_state = self.get_negative_log_likelihood(outputs,
                                                                        posterior_softmax_w,
                                                                        posterior_softmax_b)
-
         tf.summary.scalar("negative_log_likelihood", negative_log_likelihood)
 
         # KL(q(theta| mu, (x, y)) || p(theta | mu))
@@ -270,10 +268,9 @@ class BayesianRNN(object):
         mean1, sigma1 = gaussian1
         mean2, sigma2 = gaussian2
 
-        kl_divergence = tf.log(sigma1/sigma2) + \
-                        ((tf.square(sigma1) + tf.square((mean1 - mean2))) /(2 * tf.square(sigma2))) \
+        kl_divergence = tf.log(tf.sqrt(sigma1)) - tf.log(tf.sqrt(sigma2)) + \
+                        ((sigma1 + tf.square((mean1 - mean2))) / (2 * sigma2)) \
                         - 0.5
-
         return tf.reduce_mean(kl_divergence)
 
     def run_train_step(self, sess, inputs, targets):

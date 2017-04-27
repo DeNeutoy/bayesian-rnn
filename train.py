@@ -81,7 +81,7 @@ def main(unused_args):
     val_data_batcher = ptb_iterator(val_data, model.batch_size, model.num_steps)
     reversed_val_data_batcher = ptb_iterator(val_data, model.batch_size, model.num_steps, reverse=True)
 
-    while not supervisor.should_stop() and step < config.max_max_epoch:
+    while not supervisor.should_stop() and step < config.max_epoch:
 
         try:
             inputs, targets = next(train_data_batcher)
