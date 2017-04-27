@@ -119,33 +119,30 @@ class BayesianRNN(object):
         # KL(q(phi) || p(phi))
         # Here we are using an _empirical_ approximation of the KL divergence
         # using a single sample, because we are parameterising p(phi) as a mixture of gaussians,
-        # so the KL no longer has a closed form. This also means we use the samples
-        # from the distributions (i.e the weights of the network) rather than their parameters.
+        # so the KL no longer has a closed form.
         phi_kl = 0.0
         for weight, mean, std in [[phi_w, phi_w_mean, phi_w_std],
                                   [phi_b, phi_b_mean, phi_b_std],
                                   [softmax_w, softmax_w_mean, softmax_w_std],
                                   [softmax_b, softmax_b_mean, softmax_b_std]]:
 
-            bernoulli_samples = tf.floor(0.8 + tf.random_uniform(tf.shape(weight), minval=0.0, maxval=1.0))
-            mean1 = mean2 = tf.zeros_like(mean)
-            # Very pointy one:
-            std1 = 0.0009 * tf.ones_like(std)
-            # Flatter one:
-            std2 = 0.15 * tf.ones_like(std)
+            # TODO(Mark): get this to work with the MOG prior using sampling.
+            # bernoulli_samples = tf.floor(0.8 + tf.random_uniform(tf.shape(weight), minval=0.0, maxval=1.0))
+            # mean1 = mean2 = tf.zeros_like(mean)
+            # # Very pointy one:
+            # std1 = 0.0009 * tf.ones_like(std)
+            # # Flatter one:
+            # std2 = 0.15 * tf.ones_like(std)
+            # phi_log_probs = log_gaussian_sample_probabilities(weight, mean, std)
+            # phi_mixture_log_probs = \
+            #     log_gaussian_mixture_sample_probabilities(weight, bernoulli_samples, mean1, mean2, std1, std2)
+            # kl = tf.exp(phi_log_probs) * (phi_log_probs - phi_mixture_log_probs)
 
-            phi_log_probs = log_gaussian_sample_probabilities(weight, mean, std)
-            phi_mixture_log_probs = \
-                log_gaussian_mixture_sample_probabilities(weight, bernoulli_samples, mean1, mean2, std1, std2)
-
-            kl = tf.exp(phi_log_probs) * (phi_log_probs - phi_mixture_log_probs)
-
-            phi_kl += tf.reduce_mean(kl)
+            phi_kl += self.compute_kl_divergence((mean, std), (tf.zeros_like(mean), tf.ones_like(std) * 0.01))
 
         tf.summary.scalar("phi_kl", phi_kl)
 
         self.cost = negative_log_likelihood + 0.1*theta_kl + 0.1*phi_kl
-
         tf.summary.scalar("cost", self.cost)
 
     def sharpen_posterior(self, inputs, cell, cell_weights, softmax_weights):
@@ -175,13 +172,14 @@ class BayesianRNN(object):
                 in all 4 gates of the LSTM cell.
 
         :return theta_weights, posterior_softmax_weights: A tuple of (theta_w, theta_b)/(softmax_w, softmax_b)
-                  of the same respective shape as
-                 (phi_w, phi_b)/(softmax_w, softmax_b), parameterised as a linear combination of phi and
-                 delta := -log(p(y|phi, x) by sampling from: theta ~ N(theta| phi - mu * delta, sigma*I),
-                 where sigma is a hyperparameter and mu is a "learning rate".
+                  of the same respective shape as (phi_w, phi_b)/(softmax_w, softmax_b), parameterised as a
+                  linear combination of phi and delta := -log(p(y|phi, x) by sampling from:
+                  theta ~ N(theta| phi - mu * delta, sigma*I),where sigma is a hyperparameter and mu is
+                  a "learning rate".
 
-        :return theta_parameters/softmax_parameters: A tuple of (theta_w_mean, theta_b_mean)/(softmax_w_mean, softma), the mean of the normal
-         distribution used to sample theta (i.e  phi - mu * delta).
+        :return theta_parameters/softmax_parameters: A tuple of (theta_w_mean, theta_b_mean)/
+                  (softmax_w_mean, softmax) the mean of the normal distribution used to
+                  sample theta (i.e  phi - mu * delta).
         """
 
         outputs, _ = static_rnn(cell, inputs, dtype=tf.float32)
