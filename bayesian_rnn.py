@@ -268,8 +268,8 @@ class BayesianRNN(object):
         mean1, sigma1 = gaussian1
         mean2, sigma2 = gaussian2
 
-        kl_divergence = tf.log(sigma1) - tf.log(sigma2) + \
-                        ((tf.square(sigma1) + tf.square((mean1 - mean2))) / (2 * tf.square(sigma2))) \
+        kl_divergence = tf.log(sigma2) - tf.log(sigma1) + \
+                        ((tf.square(sigma1) + tf.square(mean1 - mean2)) / (2 * tf.square(sigma2))) \
                         - 0.5
         return tf.reduce_mean(kl_divergence)
 
