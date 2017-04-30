@@ -86,7 +86,7 @@ def main(unused_args):
 
         test_loss = 0.0
         for i, (inputs, targets) in enumerate(test_data_batcher.iterator):
-            (summaries, loss, step) = model.run_eval_step(sess, inputs, targets)
+            (summaries, loss, step) = model.run_eval_step(sess, inputs, targets, i)
             test_loss = ((test_loss * i) + loss) / (i + 1)
 
             if supervisor.should_stop():
