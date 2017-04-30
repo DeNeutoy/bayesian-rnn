@@ -26,6 +26,29 @@ import os
 import numpy as np
 
 
+class Batcher(object):
+    """
+    A generator wrapper which can refesh itself
+    using the originally provided data.
+    """
+    def __init__(self, data, batch_size, num_steps, reverse=False):
+
+        self.data = data
+        self.batch_size = batch_size
+        self.num_steps = num_steps
+        self.reverse = reverse
+        self.refresh_generator()
+
+    def refresh_generator(self):
+        self.iterator = ptb_iterator(self.data,
+                                     self.batch_size,
+                                     self.num_steps,
+                                     reverse=self.reverse)
+
+    def __next__(self):
+        return next(self.iterator)
+
+
 def _read_words(filename):
     with open(filename, "r") as f:
         return f.read().replace("\n", "<eos>").split()

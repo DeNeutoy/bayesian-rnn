@@ -1,4 +1,16 @@
 
+def get_config(conf):
+    if conf == "small":
+        return SmallConfig
+    elif conf == "medium":
+        return MediumConfig
+    elif conf == "large":
+        return LargeConfig
+    elif conf == "titanx":
+        return TitanXConfig
+    else:
+        raise ValueError('did not enter acceptable model config:', conf)
+
 class SmallConfig(object):
     """Small config."""
     init_scale = 0.1
@@ -12,6 +24,7 @@ class SmallConfig(object):
     lr_decay = 0.5
     batch_size = 20
     vocab_size = 10000
+    summary_frequency = 10
 
 
 class MediumConfig(object):
@@ -27,6 +40,7 @@ class MediumConfig(object):
     lr_decay = 0.8
     batch_size = 20
     vocab_size = 10000
+    summary_frequency = 10
 
 
 class LargeConfig(object):
@@ -42,6 +56,7 @@ class LargeConfig(object):
     lr_decay = 1 / 1.15
     batch_size = 20
     vocab_size = 10000
+    summary_frequency = 10
 
 
 class TitanXConfig(object):
@@ -57,3 +72,5 @@ class TitanXConfig(object):
     lr_decay = 1 / 1.10
     batch_size = 64
     vocab_size = 10000
+    summary_frequency = 10
+

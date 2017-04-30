@@ -21,15 +21,17 @@ class BayesianRNN(object):
     """
 
     def __init__(self, config, is_training=False):
+
         self.config = config
         self.batch_size = config.batch_size
         self.num_steps = config.num_steps
         self.hidden_size = config.hidden_size
         self.embedding_size = config.embedding_size
-        self.num_layers = 1
         self.vocab_size = config.vocab_size
         self.max_grad_norm = config.max_grad_norm
         self.learning_rate = config.learning_rate
+        self.init_scale = config.init_scale
+        self.summary_frequency = config.summary_frequency
         self.is_training = is_training
 
     def build(self):
@@ -47,6 +49,7 @@ class BayesianRNN(object):
                 zip(grads, tvars), global_step=self.global_step, name='train_step')
 
         self.summary = tf.summary.merge_all()
+        self.image_summary = tf.summary.merge_all("IMAGE")
 
     def build_rnn(self):
         # Placeholders for inputs.
@@ -62,26 +65,26 @@ class BayesianRNN(object):
         logger.info("Building LSTM cell with weights drawn from q(phi) = N(phi | mu, sigma)")
         with tf.variable_scope("phi_rnn"):
 
-            phi_w, phi_w_mean, phi_w_std = get_random_normal_variable("phi_w", 0.0, 0.05,
+            phi_w, phi_w_mean, phi_w_std = get_random_normal_variable("phi_w", 0.0, self.init_scale,
                                                [self.embedding_size + self.hidden_size,
                                                 4 * self.hidden_size], dtype=tf.float32)
-            phi_b, phi_b_mean, phi_b_std = get_random_normal_variable("phi_b", 0.0, 0.05,
+            phi_b, phi_b_mean, phi_b_std = get_random_normal_variable("phi_b", 0.0, self.init_scale,
                                                [4 * self.hidden_size], dtype=tf.float32)
 
             tf.summary.image("phi_mean", tf.reshape(phi_w_mean, [1, self.embedding_size + self.hidden_size,
-                                                4 * self.hidden_size, 1]), max_outputs=1)
+                                                4 * self.hidden_size, 1]), max_outputs=1, collections=["IMAGE"])
             tf.summary.image("phi_std", tf.reshape(phi_w_std, [1, self.embedding_size + self.hidden_size,
-                                                4 * self.hidden_size, 1]), max_outputs=1)
+                                                4 * self.hidden_size, 1]), max_outputs=1, collections=["IMAGE"])
 
             phi_cell = ExternallyParameterisedLSTM(phi_w, phi_b, num_units=self.hidden_size)
 
         with tf.variable_scope("softmax_weights"):
             softmax_w, softmax_w_mean, softmax_w_std = \
-                get_random_normal_variable("softmax_w", 0.0, 0.05,
+                get_random_normal_variable("softmax_w", 0.0, self.init_scale,
                                            [self.hidden_size, self.vocab_size], dtype=tf.float32)
 
             softmax_b, softmax_b_mean, softmax_b_std = \
-                get_random_normal_variable("softmax_b", 0.0, 0.05,
+                get_random_normal_variable("softmax_b", 0.0, self.init_scale,
                                            [self.vocab_size], dtype=tf.float32)
 
         # Sample from posterior and assign to LSTM weights
@@ -90,8 +93,11 @@ class BayesianRNN(object):
         [theta_w_mean, theta_b_mean], [posterior_softmax_w_mean, posterior_softmax_b_mean] = \
             self.sharpen_posterior(inputs, phi_cell, [phi_w, phi_b], [softmax_w, softmax_b])
 
-        tf.summary.image("theta_mean", tf.reshape(theta_w_mean, [1, self.embedding_size + self.hidden_size,
-                                                             4 * self.hidden_size, 1]), max_outputs=1)
+        tf.summary.image("theta_mean",
+                         tf.reshape(theta_w_mean, [1, self.embedding_size + self.hidden_size, 4 * self.hidden_size, 1]),
+                         max_outputs=1,
+                         collections=["IMAGE"])
+
         logger.info("Building LSTM cell with new weights sampled from posterior")
         with tf.variable_scope("theta_lstm"):
             theta_cell = ExternallyParameterisedLSTM(theta_w, theta_b, num_units=self.hidden_size)
@@ -136,12 +142,13 @@ class BayesianRNN(object):
             #     log_gaussian_mixture_sample_probabilities(weight, bernoulli_samples, mean1, mean2, std1, std2)
             # kl = tf.exp(phi_log_probs) * (phi_log_probs - phi_mixture_log_probs)
 
+            # This is different from the paper - just using a univariate gaussian
+            # prior so that the KL has a closed form.
             phi_kl += self.compute_kl_divergence((mean, std), (tf.zeros_like(mean), tf.ones_like(std) * 0.01))
 
         tf.summary.scalar("phi_kl", phi_kl)
 
         self.cost = negative_log_likelihood + 0.1*theta_kl + 0.1*phi_kl
-        tf.summary.scalar("cost", self.cost)
 
     def sharpen_posterior(self, inputs, cell, cell_weights, softmax_weights):
 
@@ -273,12 +280,27 @@ class BayesianRNN(object):
                         - 0.5
         return tf.reduce_mean(kl_divergence)
 
-    def run_train_step(self, sess, inputs, targets):
-        summary, cost, train_step, _ = sess.run([self.summary, self.cost, self.global_step, self.train_op],
+    def run_train_step(self, sess, inputs, targets, step):
+
+        if step % self.summary_frequency == 0:
+            summary, cost, train_step, _ = sess.run([self.summary, self.cost, self.global_step, self.train_op],
+                                                    {self.input_data: inputs, self.targets: targets})
+        else:
+            cost, train_step, _ = sess.run([self.cost, self.global_step, self.train_op],
                                                 {self.input_data: inputs, self.targets: targets})
+            summary = None
         return summary, cost, train_step
 
-    def run_eval_step(self, sess, inputs, targets):
-        summary, cost, val_step = sess.run([self.summary, self.cost, self.global_step],
-                                           {self.input_data: inputs, self.targets: targets})
+    def run_eval_step(self, sess, inputs, targets, step):
+
+        if step % self.summary_frequency == 0:
+            summary, cost, val_step = sess.run([self.summary, self.cost, self.global_step],
+                                               {self.input_data: inputs, self.targets: targets})
+        else:
+            cost, val_step = sess.run([self.cost, self.global_step],
+                                      {self.input_data: inputs, self.targets: targets})
+            summary = None
         return summary, cost, val_step
+
+    def run_image_summary(self, sess, inputs, targets):
+        return sess.run([self.image_summary, self.global_step], {self.input_data: inputs, self.targets:targets})

@@ -4,27 +4,14 @@ from __future__ import print_function
 
 import os
 
-import config as cf
 import tensorflow as tf
 import logging
 
 from bayesian_rnn import BayesianRNN
-from reader import ptb_raw_data, ptb_iterator
-
+from reader import ptb_raw_data, Batcher
+from config import get_config
 
 logger = logging.getLogger(__name__)
-
-def get_config(conf):
-    if conf == "small":
-        return cf.SmallConfig
-    elif conf == "medium":
-        return cf.MediumConfig
-    elif conf == "large":
-        return cf.LargeConfig
-    elif conf == "titanx":
-        return cf.TitanXConfig
-    else:
-        raise ValueError('did not enter acceptable model config:', conf)
 
 
 def get_running_avg_loss(name, metric, running_avg_metric, summary_writer, step, decay=0.999):
@@ -36,10 +23,27 @@ def get_running_avg_loss(name, metric, running_avg_metric, summary_writer, step,
     else:
         running_avg_metric = running_avg_metric * decay + (1 - decay) * metric
     loss_sum = tf.Summary()
-    loss_sum.value.add(tag=name, simple_value=running_avg_metric)
+    loss_sum.value.add(tag="loss", simple_value=running_avg_metric)
     summary_writer.add_summary(loss_sum, step)
     logger.info("Metric Reported: {} : {}".format(name, running_avg_metric))
     return running_avg_metric
+
+
+def run_step(name, batcher, step_function, session, summary_writer, running_avg_metric, step):
+
+    try:
+        inputs, targets = next(batcher)
+    except StopIteration:
+        batcher.refresh_generator()
+        inputs, targets = next(batcher)
+
+    summaries, loss, step = step_function(session, inputs, targets, step)
+
+    if summaries is not None:
+        summary_writer.add_summary(summaries, step)
+    running_avg_loss = get_running_avg_loss(name + "_loss", running_avg_metric, loss,
+                                            summary_writer, step)
+    return running_avg_loss
 
 
 def main(unused_args):
@@ -77,41 +81,55 @@ def main(unused_args):
     val_running_avg_loss = 0
     step = 0
 
-    train_data_batcher = ptb_iterator(train_data, model.batch_size, model.num_steps)
-    val_data_batcher = ptb_iterator(val_data, model.batch_size, model.num_steps)
-    reversed_val_data_batcher = ptb_iterator(val_data, model.batch_size, model.num_steps, reverse=True)
+    if FLAGS.test:
+        test_data_batcher = Batcher(test_data, model.batch_size, model.num_steps)
 
-    while not supervisor.should_stop() and step < config.max_epoch:
+        test_loss = 0.0
+        for i, (inputs, targets) in enumerate(test_data_batcher.iterator):
+            (summaries, loss, step) = model.run_eval_step(sess, inputs, targets)
+            test_loss = ((test_loss * i) + loss) / (i + 1)
 
-        try:
-            inputs, targets = next(train_data_batcher)
+            if supervisor.should_stop():
+                supervisor.stop()
+        logger.info("Final Test Loss: {}".format(test_loss))
+        supervisor.stop()
 
-        except StopIteration:
-            train_data_batcher = ptb_iterator(train_data, model.batch_size, model.num_steps)
-            inputs, targets = next(train_data_batcher)
+    else:
+        train_data_batcher = Batcher(train_data, model.batch_size, model.num_steps)
+        val_data_batcher = Batcher(val_data, model.batch_size, model.num_steps)
+        reversed_val_data_batcher = Batcher(val_data, model.batch_size, model.num_steps, reverse=True)
+        while not supervisor.should_stop() and step < config.max_epoch:
 
-        (summaries, loss, train_step) = model.run_train_step(sess, inputs, targets)
+            running_avg_loss = run_step("train",
+                                        train_data_batcher,
+                                        model.run_train_step,
+                                        sess,
+                                        train_summary_writer,
+                                        running_avg_loss,
+                                        step)
 
-        train_summary_writer.add_summary(summaries, train_step)
-        running_avg_loss = get_running_avg_loss("train_loss", running_avg_loss, loss,
-                                                train_summary_writer, train_step)
+            val_running_avg_loss = run_step("validation",
+                                            val_data_batcher,
+                                            model.run_eval_step,
+                                            sess,
+                                            val_summary_writer,
+                                            val_running_avg_loss,
+                                            step)
 
-        try:
-            inputs, targets = next(val_data_batcher)
-        except StopIteration:
-            val_data_batcher = ptb_iterator(val_data, model.batch_size, model.num_steps)
-            inputs, targets = next(val_data_batcher)
-        (val_summaries, val_loss, val_step) = model.run_train_step(sess, inputs, targets)
+            if step % 1000 == 0:
+                try:
+                    inputs, targets = next(train_data_batcher.iterator)
+                except StopIteration:
+                    train_data_batcher.refresh_generator()
+                    inputs, targets = next(train_data_batcher.iterator)
+                image_summary, global_step = model.run_image_summary(sess, inputs, targets)
+                train_summary_writer.add_summary(image_summary, global_step)
 
-        train_summary_writer.add_summary(summaries, train_step)
-        val_running_avg_loss = get_running_avg_loss("val_loss", val_running_avg_loss, val_loss,
-                                                    val_summary_writer, val_step)
-
-        step += 1
-        if step % 100 == 0:
-            train_summary_writer.flush()
-            val_summary_writer.flush()
-    supervisor.stop()
+            step += 1
+            if step % 100 == 0:
+                train_summary_writer.flush()
+                val_summary_writer.flush()
+        supervisor.stop()
 
 
 if __name__ == '__main__':
@@ -122,6 +140,7 @@ if __name__ == '__main__':
     flags.DEFINE_string("model_size", "small", "Size of model to train, either small, medium or large")
     flags.DEFINE_string("data_path", os.path.expanduser("~")+'/ptb/', "data_path")
     flags.DEFINE_string("log_dir", "./log", "path to directory for saving tensorboard logs.")
+    flags.DEFINE_bool("test", False, "Evaluate model on test data.")
     FLAGS = flags.FLAGS
 
     from tensorflow.python.platform import flags
