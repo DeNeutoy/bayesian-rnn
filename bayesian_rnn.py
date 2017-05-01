@@ -92,12 +92,15 @@ class BayesianRNN(object):
 
         # Sample from posterior and assign to LSTM weights
         logger.info("Resampling weights using Posterior Sharpening")
-        [theta_w, theta_b], [posterior_softmax_w, posterior_softmax_b],\
-        [theta_w_mean, theta_b_mean], [posterior_softmax_w_mean, posterior_softmax_b_mean] = \
-            self.sharpen_posterior(inputs, phi_cell, [phi_w, phi_b], [softmax_w, softmax_b])
+        posterior_weights = self.sharpen_posterior(inputs, phi_cell, [phi_w, phi_b], [softmax_w, softmax_b])
+        [theta_w, theta_b] = posterior_weights[0]
+        [posterior_softmax_w, posterior_softmax_b] = posterior_weights[1]
+        [theta_w_mean, theta_b_mean] = posterior_weights[2]
+        [posterior_softmax_w_mean, posterior_softmax_b_mean] = posterior_weights[3]
 
-        tf.summary.image("theta_mean",
-                         tf.reshape(theta_w_mean, [1, self.embedding_size + self.hidden_size, 4 * self.hidden_size, 1]),
+        tf.summary.image("sharpening_difference",
+                         tf.reshape(theta_w_mean - phi_w_mean,
+                                    [1, self.embedding_size + self.hidden_size, 4 * self.hidden_size, 1]),
                          max_outputs=1,
                          collections=["IMAGE"])
 
@@ -155,6 +158,8 @@ class BayesianRNN(object):
         tf.summary.scalar("phi_kl", phi_kl)
 
         self.cost = negative_log_likelihood + 0.1*theta_kl + 0.1*phi_kl
+        self.inference_cost = self.mean_field_inference(phi_w_mean, phi_w_std, softmax_w, softmax_b)
+        tf.summary.scalar("sharpened_word_perplexity", tf.minimum(1000.0, tf.exp(self.cost/self.num_steps)))
 
     def sharpen_posterior(self, inputs, cell, cell_weights, softmax_weights):
 
@@ -219,8 +224,8 @@ class BayesianRNN(object):
 
         return theta_weights, posterior_softmax_weights, theta_parameters, softmax_parameters
 
-    def resample(self, weight, gradient):
-
+    @staticmethod
+    def resample(weight, gradient):
         """
         Given parameters phi and the gradients of phi with respect to -log(p(y|phi, x),
         sample posterior weights: theta ~ N(theta | phi - mu * delta, sigma*I).
@@ -247,12 +252,9 @@ class BayesianRNN(object):
 
         """
         Given a sequence of outputs from an LSTM and projection weights to project the LSTM
-        outputs to |V|, compute the batch and sequence averaged NLL.
+        outputs to |V|, compute the batch averaged NLL.
         """
-
-        # Softmax to get probability distribution over vocab.
         output = tf.reshape(tf.concat(outputs, 1), [-1, self.hidden_size])
-
         logits = tf.matmul(output, softmax_w) + softmax_b   # dim (numsteps*batchsize, vocabsize)
 
         labels = tf.reshape(self.targets, [-1])
@@ -262,11 +264,10 @@ class BayesianRNN(object):
         # of the log likelihood wrt phi), so we have to create the actual 1-hot labels explicitly.
         loss = tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=labels)
 
-        cost = (tf.reduce_sum(loss) / (self.batch_size * self.num_steps))
+        return tf.reduce_sum(loss) / self.batch_size
 
-        return cost
-
-    def compute_kl_divergence(self, gaussian1, gaussian2):
+    @staticmethod
+    def compute_kl_divergence(gaussian1, gaussian2):
 
         """
         Compute the batch averaged exact KL Divergence between two
@@ -284,6 +285,17 @@ class BayesianRNN(object):
                         ((tf.square(sigma1) + tf.square(mean1 - mean2)) / (2 * tf.square(sigma2))) \
                         - 0.5
         return tf.reduce_mean(kl_divergence)
+
+    def mean_field_inference(self, mean_w, mean_b, softmax_w, softmax_b):
+        """
+        Build an LSTM using the mean parameters - used for inference, because we can't run
+        posterior sampling if we don't have labels!
+        :return:
+        """
+        cell = ExternallyParameterisedLSTM(mean_w, mean_b)
+        outputs = static_rnn(cell, self.input_data, initial_state=self.initial_state)
+
+        return self.get_negative_log_likelihood(outputs, softmax_w, softmax_b)
 
     def run_train_step(self, sess, inputs, targets, state, memory, step):
 
@@ -304,12 +316,12 @@ class BayesianRNN(object):
     def run_eval_step(self, sess, inputs, targets, state, memory, step):
 
         if step % self.summary_frequency == 0:
-            summary, cost, val_step, state, memory = sess.run([self.summary, self.cost, self.global_step,
+            summary, cost, val_step, state, memory = sess.run([self.summary, self.inference_cost, self.global_step,
                                                  self.final_lstm_state, self.final_lstm_memory],
                                                {self.input_data: inputs, self.targets: targets,
                                                 self.initial_lstm_state: state, self.initial_lstm_memory: memory})
         else:
-            cost, val_step, state, memory = sess.run([self.cost, self.global_step,
+            cost, val_step, state, memory = sess.run([self.inference_cost, self.global_step,
                                                       self.final_lstm_state, self.final_lstm_memory],
                                       {self.input_data: inputs, self.targets: targets,
                                        self.initial_lstm_state: state, self.initial_lstm_memory: memory})
