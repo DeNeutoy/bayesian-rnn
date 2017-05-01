@@ -293,7 +293,7 @@ class BayesianRNN(object):
         :return:
         """
         cell = ExternallyParameterisedLSTM(mean_w, mean_b, num_units=self.hidden_size)
-        outputs = static_rnn(cell, inputs=inputs, initial_state=self.initial_state)
+        outputs, _ = static_rnn(cell, inputs=inputs, initial_state=self.initial_state)
 
         return self.get_negative_log_likelihood(outputs, softmax_w, softmax_b)
 
