@@ -158,7 +158,7 @@ class BayesianRNN(object):
         tf.summary.scalar("phi_kl", phi_kl)
 
         self.cost = negative_log_likelihood + 0.1*theta_kl + 0.1*phi_kl
-        self.inference_cost = self.mean_field_inference(inputs, phi_w_mean, phi_w_std, softmax_w, softmax_b)
+        self.inference_cost = self.mean_field_inference(inputs, phi_w_mean, phi_b_mean, softmax_w, softmax_b)
         tf.summary.scalar("sharpened_word_perplexity", tf.minimum(1000.0, tf.exp(self.cost/self.num_steps)))
 
     def sharpen_posterior(self, inputs, cell, cell_weights, softmax_weights):
