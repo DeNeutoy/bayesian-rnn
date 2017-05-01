@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import tensorflow as tf
-from tensorflow.contrib.rnn import static_rnn
+from tensorflow.contrib.rnn import static_rnn, LSTMStateTuple
 
 from stochastic_variables import get_random_normal_variable, ExternallyParameterisedLSTM
 from stochastic_variables import log_gaussian_mixture_sample_probabilities, log_gaussian_sample_probabilities
@@ -55,6 +55,9 @@ class BayesianRNN(object):
         # Placeholders for inputs.
         self.input_data = tf.placeholder(tf.int32, [self.batch_size, self.num_steps])
         self.targets = tf.placeholder(tf.int32, [self.batch_size, self.num_steps])
+        self.initial_lstm_memory = tf.placeholder(tf.float32, [self.batch_size, self.hidden_size])
+        self.initial_lstm_state = tf.placeholder(tf.float32, [self.batch_size, self.hidden_size])
+        self.initial_state = LSTMStateTuple(self.initial_lstm_memory, self.initial_lstm_state)
 
         # Embed and split up input into a list of (batch_size, embedding_dim) tensors.
         embedding = tf.get_variable('embedding', [self.vocab_size, self.embedding_size])
@@ -102,11 +105,14 @@ class BayesianRNN(object):
         with tf.variable_scope("theta_lstm"):
             theta_cell = ExternallyParameterisedLSTM(theta_w, theta_b, num_units=self.hidden_size)
 
-        outputs, final_state = static_rnn(theta_cell, inputs, dtype=tf.float32)
+        outputs, final_state = static_rnn(theta_cell, inputs, initial_state=self.initial_state)
 
-        negative_log_likelihood, self.final_state = self.get_negative_log_likelihood(outputs,
-                                                                       posterior_softmax_w,
-                                                                       posterior_softmax_b)
+        self.final_lstm_memory = final_state.c
+        self.final_lstm_state = final_state.h
+
+        negative_log_likelihood = self.get_negative_log_likelihood(outputs,
+                                                                   posterior_softmax_w,
+                                                                   posterior_softmax_b)
         tf.summary.scalar("negative_log_likelihood", negative_log_likelihood)
 
         # KL(q(theta| mu, (x, y)) || p(theta | mu))
@@ -187,8 +193,8 @@ class BayesianRNN(object):
                   sample theta (i.e  phi - mu * delta).
         """
 
-        outputs, _ = static_rnn(cell, inputs, dtype=tf.float32)
-        cost, _ = self.get_negative_log_likelihood(outputs, *softmax_weights)
+        outputs, _ = static_rnn(cell, inputs, initial_state=self.initial_state)
+        cost = self.get_negative_log_likelihood(outputs, *softmax_weights)
 
         all_weights = cell_weights + softmax_weights
 
@@ -257,9 +263,8 @@ class BayesianRNN(object):
         loss = tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=labels)
 
         cost = (tf.reduce_sum(loss) / (self.batch_size * self.num_steps))
-        final_state = outputs[-1]
 
-        return cost, final_state
+        return cost
 
     def compute_kl_divergence(self, gaussian1, gaussian2):
 
@@ -280,27 +285,38 @@ class BayesianRNN(object):
                         - 0.5
         return tf.reduce_mean(kl_divergence)
 
-    def run_train_step(self, sess, inputs, targets, step):
+    def run_train_step(self, sess, inputs, targets, state, memory, step):
 
         if step % self.summary_frequency == 0:
-            summary, cost, train_step, _ = sess.run([self.summary, self.cost, self.global_step, self.train_op],
-                                                    {self.input_data: inputs, self.targets: targets})
+            summary, cost, train_step, state, memory, _ = sess.run([self.summary, self.cost, self.global_step,
+                                                                    self.final_lstm_state, self.final_lstm_memory,
+                                                                    self.train_op],
+                                                    {self.input_data: inputs, self.targets: targets,
+                                                     self.initial_lstm_state: state, self.initial_lstm_memory: memory})
         else:
-            cost, train_step, _ = sess.run([self.cost, self.global_step, self.train_op],
-                                                {self.input_data: inputs, self.targets: targets})
+            cost, train_step, state, memory, _ = sess.run([self.cost, self.global_step, self.final_lstm_state,
+                                                           self.final_lstm_memory, self.train_op],
+                                           {self.input_data: inputs, self.targets: targets,
+                                            self.initial_lstm_state: state, self.initial_lstm_memory: memory})
             summary = None
-        return summary, cost, train_step
+        return summary, cost, state, memory, train_step
 
-    def run_eval_step(self, sess, inputs, targets, step):
+    def run_eval_step(self, sess, inputs, targets, state, memory, step):
 
         if step % self.summary_frequency == 0:
-            summary, cost, val_step = sess.run([self.summary, self.cost, self.global_step],
-                                               {self.input_data: inputs, self.targets: targets})
+            summary, cost, val_step, state, memory = sess.run([self.summary, self.cost, self.global_step,
+                                                 self.final_lstm_state, self.final_lstm_memory],
+                                               {self.input_data: inputs, self.targets: targets,
+                                                self.initial_lstm_state: state, self.initial_lstm_memory: memory})
         else:
-            cost, val_step = sess.run([self.cost, self.global_step],
-                                      {self.input_data: inputs, self.targets: targets})
+            cost, val_step, state, memory = sess.run([self.cost, self.global_step,
+                                                      self.final_lstm_state, self.final_lstm_memory],
+                                      {self.input_data: inputs, self.targets: targets,
+                                       self.initial_lstm_state: state, self.initial_lstm_memory: memory})
             summary = None
-        return summary, cost, val_step
+        return summary, cost, state, memory, val_step
 
-    def run_image_summary(self, sess, inputs, targets):
-        return sess.run([self.image_summary, self.global_step], {self.input_data: inputs, self.targets:targets})
+    def run_image_summary(self, sess, inputs, targets, state, memory):
+        return sess.run([self.image_summary, self.global_step],
+                        {self.input_data: inputs, self.targets: targets,
+                         self.initial_lstm_state: state, self.initial_lstm_memory: memory})
