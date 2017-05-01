@@ -158,7 +158,7 @@ class BayesianRNN(object):
         tf.summary.scalar("phi_kl", phi_kl)
 
         self.cost = negative_log_likelihood + 0.1*theta_kl + 0.1*phi_kl
-        self.inference_cost = self.mean_field_inference(phi_w_mean, phi_w_std, softmax_w, softmax_b)
+        self.inference_cost = self.mean_field_inference(inputs, phi_w_mean, phi_w_std, softmax_w, softmax_b)
         tf.summary.scalar("sharpened_word_perplexity", tf.minimum(1000.0, tf.exp(self.cost/self.num_steps)))
 
     def sharpen_posterior(self, inputs, cell, cell_weights, softmax_weights):
@@ -286,14 +286,14 @@ class BayesianRNN(object):
                         - 0.5
         return tf.reduce_mean(kl_divergence)
 
-    def mean_field_inference(self, mean_w, mean_b, softmax_w, softmax_b):
+    def mean_field_inference(self, inputs, mean_w, mean_b, softmax_w, softmax_b):
         """
         Build an LSTM using the mean parameters - used for inference, because we can't run
         posterior sampling if we don't have labels!
         :return:
         """
-        cell = ExternallyParameterisedLSTM(mean_w, mean_b)
-        outputs = static_rnn(cell, self.input_data, initial_state=self.initial_state)
+        cell = ExternallyParameterisedLSTM(mean_w, mean_b, num_units=self.hidden_size)
+        outputs = static_rnn(cell, inputs=inputs, initial_state=self.initial_state)
 
         return self.get_negative_log_likelihood(outputs, softmax_w, softmax_b)
 
