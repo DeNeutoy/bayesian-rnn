@@ -47,9 +47,11 @@ class BayesianRNN(object):
 
             self.learning_rate = tf.Variable(self.learning_rate, trainable=False)
             tf.summary.scalar("learning_rate", self.learning_rate)
-            self._new_learning_rate = tf.placeholder(tf.float32, shape=[], name="new_learning_rate")
-            self._lr_update = tf.assign(self.learning_rate, self._new_learning_rate)
 
+            self.learning_rate = tf.train.inverse_time_decay(self.learning_rate,
+                                                             self.global_step,
+                                                             5000,
+                                                             self.learning_rate_decay)
             optimizer = tf.train.GradientDescentOptimizer(self.learning_rate)
             self.train_op = optimizer.apply_gradients(
                 zip(grads, tvars), global_step=self.global_step, name='train_step')
@@ -302,11 +304,6 @@ class BayesianRNN(object):
         outputs, _ = static_rnn(cell, inputs=inputs, initial_state=self.initial_state)
 
         return self.get_negative_log_likelihood(outputs, softmax_w, softmax_b)
-
-    def decay_learning_rate(self, sess):
-        learning_rate = sess.run(self.learning_rate)
-        new_learning_rate = learning_rate * self.learning_rate_decay
-        sess.run(self._lr_update, {self._new_learning_rate: new_learning_rate})
 
     def run_train_step(self, sess, inputs, targets, state, memory, step):
 

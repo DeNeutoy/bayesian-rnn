@@ -133,8 +133,6 @@ def main(unused_args):
                                                                    val_state,
                                                                    val_memory)
 
-            # Drop the learning rate.
-            model.decay_learning_rate(sess)
             if step % 1000 == 0:
                 try:
                     inputs, targets = next(train_data_batcher.iterator)
