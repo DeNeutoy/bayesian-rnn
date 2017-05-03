@@ -6,7 +6,6 @@ from tensorflow.contrib.rnn import static_rnn, LSTMStateTuple
 
 from stochastic_variables import get_random_normal_variable, ExternallyParameterisedLSTM
 from stochastic_variables import log_gaussian_mixture_sample_probabilities, log_gaussian_sample_probabilities
-
 import logging
 
 logger = logging.getLogger(__name__)
@@ -43,6 +42,8 @@ class BayesianRNN(object):
         if self.is_training:
             logger.info("Adding training operations")
             tvars = tf.trainable_variables()
+            for x in tvars:
+                print(x.name)
             grads, _ = tf.clip_by_global_norm(tf.gradients(self.cost, tvars), self.max_grad_norm)
             optimizer = tf.train.AdamOptimizer(self.learning_rate)
             self.train_op = optimizer.apply_gradients(
@@ -157,8 +158,8 @@ class BayesianRNN(object):
 
         tf.summary.scalar("phi_kl", phi_kl)
 
-        self.cost = negative_log_likelihood + 0.1*theta_kl + 0.1*phi_kl
-        self.inference_cost = self.mean_field_inference(inputs, phi_w_mean, phi_b_mean, softmax_w, softmax_b)
+        self.cost = negative_log_likelihood + (theta_kl / self.batch_size) + (phi_kl / self.batch_size*self.num_steps)
+        self.inference_cost = self.mean_field_inference(inputs, phi_w_mean, phi_b_mean, softmax_w_mean, softmax_b_mean)
         tf.summary.scalar("sharpened_word_perplexity", tf.minimum(1000.0, tf.exp(self.cost/self.num_steps)))
 
     def sharpen_posterior(self, inputs, cell, cell_weights, softmax_weights):
@@ -205,7 +206,6 @@ class BayesianRNN(object):
 
         # Gradients of log(p(y | phi, x )) with respect to phi (i.e., the log likelihood).
         gradients, _ = tf.clip_by_global_norm(tf.gradients(cost, all_weights), self.max_grad_norm)
-
         new_weights = []
         new_parameters = []
         parameter_name_scopes = ["phi_w_sample", "phi_b_sample", "softmax_w_sample", "softmax_b_sample"]
