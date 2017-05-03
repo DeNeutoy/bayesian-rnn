@@ -142,6 +142,9 @@ def main(unused_args):
                 image_summary, global_step = model.run_image_summary(sess, inputs, targets, train_state, train_memory)
                 train_summary_writer.add_summary(image_summary, global_step)
 
+            if step > 30000 and step % 10000:
+                model.decay_learning_rate(sess)
+
             step += 1
             if step % 100 == 0:
                 train_summary_writer.flush()
