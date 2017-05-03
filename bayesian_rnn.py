@@ -29,6 +29,7 @@ class BayesianRNN(object):
         self.vocab_size = config.vocab_size
         self.max_grad_norm = config.max_grad_norm
         self.learning_rate = config.learning_rate
+        self.learning_rate_decay = config.learning_rate_decay
         self.init_scale = config.init_scale
         self.summary_frequency = config.summary_frequency
         self.is_training = is_training
@@ -42,10 +43,14 @@ class BayesianRNN(object):
         if self.is_training:
             logger.info("Adding training operations")
             tvars = tf.trainable_variables()
-            for x in tvars:
-                print(x.name)
             grads, _ = tf.clip_by_global_norm(tf.gradients(self.cost, tvars), self.max_grad_norm)
-            optimizer = tf.train.AdamOptimizer(self.learning_rate)
+
+            self.learning_rate = tf.Variable(self.learning_rate, trainable=False)
+            tf.summary.scalar("learning_rate", self.learning_rate)
+            self._new_learning_rate = tf.placeholder(tf.float32, shape=[], name="new_learning_rate")
+            self._lr_update = tf.assign(self.learning_rate, self._new_learning_rate)
+
+            optimizer = tf.train.GradientDescentOptimizer(self.learning_rate)
             self.train_op = optimizer.apply_gradients(
                 zip(grads, tvars), global_step=self.global_step, name='train_step')
 
@@ -161,7 +166,7 @@ class BayesianRNN(object):
         self.cost = negative_log_likelihood + (theta_kl / self.batch_size) + (phi_kl / self.batch_size*self.num_steps)
         self.inference_cost = self.mean_field_inference(inputs, phi_w_mean, phi_b_mean, softmax_w_mean, softmax_b_mean)
         tf.summary.scalar("sharpened_word_perplexity", tf.minimum(1000.0, tf.exp(self.cost/self.num_steps)))
-        tf.summary.scalar("unsharpened_val_perplexity", tf.exp(self.inference_cost/self.num_steps))
+        tf.summary.scalar("unsharpened_val_perplexity", tf.exp(self.inference_cost/self.num_steps), "VAL")
 
     def sharpen_posterior(self, inputs, cell, cell_weights, softmax_weights):
 
@@ -297,6 +302,11 @@ class BayesianRNN(object):
         outputs, _ = static_rnn(cell, inputs=inputs, initial_state=self.initial_state)
 
         return self.get_negative_log_likelihood(outputs, softmax_w, softmax_b)
+
+    def decay_learning_rate(self, sess):
+        learning_rate = sess.run(self.learning_rate)
+        new_learning_rate = learning_rate * self.learning_rate_decay
+        sess.run(self._lr_update, {self._new_learning_rate: new_learning_rate})
 
     def run_train_step(self, sess, inputs, targets, state, memory, step):
 
