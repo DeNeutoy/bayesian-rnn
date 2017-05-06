@@ -145,21 +145,21 @@ class BayesianRNN(object):
                                   [softmax_b, softmax_b_mean, softmax_b_std]]:
 
             # TODO(Mark): get this to work with the MOG prior using sampling.
-            bernoulli_samples = tf.floor(0.8 + tf.random_uniform(tf.shape(weight), minval=0.0, maxval=1.0))
-            mean1 = mean2 = tf.zeros_like(mean)
-            # Very pointy one:
-            std1 = 0.0009 * tf.ones_like(std)
-            # Flatter one:
-            std2 = 0.15 * tf.ones_like(std)
-            phi_log_probs = log_gaussian_sample_probabilities(weight, mean, std)
-            phi_mixture_log_probs = \
-                log_gaussian_mixture_sample_probabilities(weight, bernoulli_samples, mean1, mean2, std1, std2)
-            kl = tf.exp(phi_log_probs) * (phi_log_probs - phi_mixture_log_probs)
+            # bernoulli_samples = tf.floor(0.8 + tf.random_uniform(tf.shape(weight), minval=0.0, maxval=1.0))
+            # mean1 = mean2 = tf.zeros_like(mean)
+            # # Very pointy one:
+            # std1 = 0.0009 * tf.ones_like(std)
+            # # Flatter one:
+            # std2 = 0.15 * tf.ones_like(std)
+            # phi_log_probs = log_gaussian_sample_probabilities(weight, mean, std)
+            # phi_mixture_log_probs = \
+            #     log_gaussian_mixture_sample_probabilities(weight, bernoulli_samples, mean1, mean2, std1, std2)
+            # kl = tf.exp(phi_log_probs) * (phi_log_probs - phi_mixture_log_probs)
+            # phi_kl += kl
 
-            phi_kl += kl
             # This is different from the paper - just using a univariate gaussian
             # prior so that the KL has a closed form.
-            #phi_kl += self.compute_kl_divergence((mean, std), (tf.zeros_like(mean), tf.ones_like(std) * 0.01))
+            phi_kl += self.compute_kl_divergence((mean, std), (tf.zeros_like(mean), tf.ones_like(std) * 0.01))
 
         tf.summary.scalar("phi_kl", phi_kl)
 
