@@ -94,7 +94,7 @@ def main(unused_args):
         test_state = state
         test_memory = memory
         for i, (inputs, targets) in enumerate(test_data_batcher.iterator):
-            summaries, loss, step, test_state, test_memory = model.run_eval_step(sess, inputs, targets,
+            summaries, loss, test_state, test_memory, step = model.run_eval_step(sess, inputs, targets,
                                                                                  test_state, test_memory, i)
             test_loss = ((test_loss * i) + loss) / (i + 1)
 
