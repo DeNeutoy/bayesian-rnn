@@ -295,7 +295,10 @@ class BayesianRNN(object):
         :return:
         """
         cell = ExternallyParameterisedLSTM(mean_w, mean_b, num_units=self.hidden_size)
-        outputs, _ = static_rnn(cell, inputs=inputs, initial_state=self.initial_state)
+        outputs, final_state = static_rnn(cell, inputs=inputs, initial_state=self.initial_state)
+
+        self.final_lstm_state_val = final_state.h
+        self.final_lstm_memory_val = final_state.c
 
         return self.get_negative_log_likelihood(outputs, softmax_w, softmax_b)
 
@@ -324,12 +327,12 @@ class BayesianRNN(object):
 
         if step % self.summary_frequency == 0:
             summary, cost, val_step, state, memory = sess.run([self.summary, self.inference_cost, self.global_step,
-                                                 self.final_lstm_state, self.final_lstm_memory],
+                                                 self.final_lstm_state_val, self.final_lstm_memory_val],
                                                {self.input_data: inputs, self.targets: targets,
                                                 self.initial_lstm_state: state, self.initial_lstm_memory: memory})
         else:
             cost, val_step, state, memory = sess.run([self.inference_cost, self.global_step,
-                                                      self.final_lstm_state, self.final_lstm_memory],
+                                                      self.final_lstm_state_val, self.final_lstm_memory_val],
                                       {self.input_data: inputs, self.targets: targets,
                                        self.initial_lstm_state: state, self.initial_lstm_memory: memory})
             summary = None
