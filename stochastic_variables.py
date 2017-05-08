@@ -7,29 +7,17 @@ from tensorflow.contrib.rnn import BasicLSTMCell, LSTMStateTuple
 from tensorflow.contrib.rnn.python.ops.core_rnn_cell_impl import _checked_scope
 
 
-def log_gaussian_sample_probabilities(samples, mean, std):
+def gaussian_mixture_nll(samples, mixing_weights, mean1, mean2, std1, std2):
     """
-    Computes the log probability that the samples were drawn from a gaussian distribution
-    with the given mean and standard deviation.
-    """
-    pi_sigma = - 0.5 * tf.log(2.0 * std * math.pi)
-    mean_shift = tf.square(samples - mean) / (2.0 * std)
-
-    return pi_sigma - mean_shift
-
-
-def log_gaussian_mixture_sample_probabilities(samples, bernouli_samples, mean1, mean2, std1, std2):
-    """
-    Computes the log probability that the samples were drawn from a mixture of two gaussian distributions
-    with the given means and standard deviations, along with precomputed bernouli samples to compute the
-    mixture.
+    Computes the NLL from a mixture of two gaussian distributions with the given
+    means and standard deviations, mixing weights and samples.
     """
     gaussian1 = (1.0/tf.sqrt(2.0 * std1 * math.pi)) * tf.exp(- tf.square(samples - mean1) / (2.0 * std1))
     gaussian2 = (1.0/tf.sqrt(2.0 * std2 * math.pi)) * tf.exp(- tf.square(samples - mean2) / (2.0 * std2))
 
-    mixture = bernouli_samples * gaussian1 + (1.0 - bernouli_samples) * gaussian2
+    mixture = (mixing_weights[0] * gaussian1) + (mixing_weights[1] * gaussian2)
 
-    return tf.log(mixture)
+    return - tf.log(mixture)
 
 
 def get_random_normal_variable(name, mean, standard_dev, shape, dtype):
