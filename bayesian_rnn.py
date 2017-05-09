@@ -144,18 +144,18 @@ class BayesianRNN(object):
                                   [softmax_w, softmax_w_mean, softmax_w_std],
                                   [softmax_b, softmax_b_mean, softmax_b_std]]:
 
-            # TODO(Mark): get this to work with the MOG prior using sampling.
-            mean1 = mean2 = tf.zeros_like(mean)
-            # Very pointy one:
-            std1 = 0.0009 * tf.ones_like(std)
-            # Flatter one:
-            std2 = 0.15 * tf.ones_like(std)
-            phi_mixture_nll = gaussian_mixture_nll(weight, [0.6, 0.4], mean1, mean2, std1, std2)
-            phi_kl += phi_mixture_nll
+            # # TODO(Mark): get this to work with the MOG prior using sampling.
+            # mean1 = mean2 = tf.zeros_like(mean)
+            # # Very pointy one:
+            # std1 = 0.0009 * tf.ones_like(std)
+            # # Flatter one:
+            # std2 = 0.15 * tf.ones_like(std)
+            # phi_mixture_nll = gaussian_mixture_nll(weight, [0.6, 0.4], mean1, mean2, std1, std2)
+            # phi_kl += phi_mixture_nll
 
             # This is different from the paper - just using a univariate gaussian
             # prior so that the KL has a closed form.
-            #phi_kl += self.compute_kl_divergence((mean, std), (tf.zeros_like(mean), tf.ones_like(std) * 0.01))
+            phi_kl += self.compute_kl_divergence((mean, std), (tf.zeros_like(mean), tf.ones_like(std) * 0.01))
 
         tf.summary.scalar("phi_kl", phi_kl)
 
